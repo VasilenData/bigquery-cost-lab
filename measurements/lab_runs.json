@@ -1,0 +1,14 @@
+{
+  "note": "Real runs in the BigQuery sandbox (project finance-mart-demo, dataset cost_lab, US), read from Job information, 2026-11-08. MB means MiB as shown by the console.",
+  "source_table": "bigquery-public-data.crypto_bitcoin.transactions, block_timestamp_month = '2020-01-01', 9 scalar columns, 9,612,337 rows",
+  "tables": {"tx_plain": "no partition, no cluster", "tx_clust": "CLUSTER BY block_number", "tx_part_clust": "PARTITION BY DATE(block_timestamp), CLUSTER BY block_number"},
+  "runs": [
+    {"query": "SUM(fee) WHERE block_number BETWEEN 612600 AND 612700", "tx_plain": {"processed_mib": 220.01, "billed_mib": 221}, "tx_clust": {"processed_mib": 18.96, "billed_mib": 19}, "tx_part_clust": {"processed_mib": 6.67, "billed_mib": 10}},
+    {"query": "SUM(fee) WHERE DATE(block_timestamp) = '2020-01-15'", "tx_plain": {"processed_mib": 220.01, "billed_mib": 221}, "tx_clust": {"processed_mib": 11.54, "billed_mib": 12}, "tx_part_clust": {"processed_mib": 7.61, "billed_mib": 10}}
+  ],
+  "estimator_predictions_made_before_measuring": [
+    {"query": "SELECT `hash` FROM tx_plain", "predicted_mib": 605.02, "console_estimate_mib": 605.02},
+    {"query": "SELECT * FROM tx_plain", "predicted_mib": 1347.55, "console_estimate": "1.32 GB (= 1.316 GiB = 1347.5 MiB)"},
+    {"query": "SELECT SUM(fee) ... WHERE block_number ... (fee + block_number)", "predicted_mib": 220.01, "measured_mib": 220.01}
+  ]
+}

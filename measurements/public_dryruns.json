@@ -1,0 +1,19 @@
+{
+  "table": "bigquery-public-data.crypto_bitcoin.transactions",
+  "method": "BigQuery console validator text 'This query will process X when run' (dry run, nothing executed, nothing billed), read 2026-11-08",
+  "price_usd_per_tib": 6.25,
+  "price_source": "https://cloud.google.com/bigquery/pricing (on-demand, first 1 TiB per month free, 10 MB minimum per table)",
+  "queries": [
+    {"id": "select_star_limit", "sql": "SELECT * FROM t LIMIT 10", "bytes_text": "2.38 TB"},
+    {"id": "one_column_limit", "sql": "SELECT `hash` FROM t LIMIT 10", "bytes_text": "90.73 GB"},
+    {"id": "two_columns", "sql": "SELECT `hash`, block_timestamp FROM t", "bytes_text": "101.73 GB"},
+    {"id": "star_except_nested", "sql": "SELECT * EXCEPT(inputs, outputs) FROM t LIMIT 10", "bytes_text": "347.81 GB"},
+    {"id": "partition_month_filter", "sql": "SELECT `hash` FROM t WHERE block_timestamp_month = '2020-01-01'", "bytes_text": "746.59 MB"},
+    {"id": "date_wrapped_filter", "sql": "SELECT `hash` FROM t WHERE DATE(block_timestamp) = '2020-01-01'", "bytes_text": "85.5 MB"},
+    {"id": "extract_year_filter", "sql": "SELECT `hash` FROM t WHERE EXTRACT(YEAR FROM block_timestamp) = 2020", "bytes_text": "7.82 GB"},
+    {"id": "non_partition_filter", "sql": "SELECT `hash` FROM t WHERE block_number > 600000", "bytes_text": "69.59 GB"},
+    {"id": "count_star", "sql": "SELECT COUNT(*) FROM t", "bytes_text": "0 B"},
+    {"id": "count_distinct", "sql": "SELECT COUNT(DISTINCT `hash`) FROM t", "bytes_text": "90.73 GB"},
+    {"id": "approx_count_distinct", "sql": "SELECT APPROX_COUNT_DISTINCT(`hash`) FROM t", "bytes_text": "90.73 GB"}
+  ]
+}
