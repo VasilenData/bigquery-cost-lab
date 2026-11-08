@@ -68,3 +68,47 @@ def test_alias_and_qualified_columns():
 def test_unknown_table_is_refused_not_guessed():
     with pytest.raises(UnsupportedQuery):
         estimate_query("SELECT a FROM nope", CAT)
+
+
+@pytest.mark.parametrize("sql", ["SELECT typo FROM tx_plain", "SELECT typo AS typo FROM tx_plain",
+                                  "SELECT missing.fee FROM tx_plain",
+                                  "SELECT * EXCEPT(typo) FROM tx_plain",
+                                  "SELECT fee FROM other_dataset.tx_plain"])
+def test_unknown_columns_aliases_and_qualified_tables_are_refused(sql):
+    with pytest.raises(UnsupportedQuery):
+        estimate_query(sql, CAT)
+
+
+def test_qualified_star_reads_only_its_table_and_join_columns():
+    catalog = {
+        "left_table": {"rows": 10, "columns": {"id": {"type": "INT64"}, "value": {"type": "NUMERIC"}}},
+        "right_table": {"rows": 20, "columns": {
+            "id": {"type": "INT64"}, "wide": {"type": "STRING", "avg_len": 1000}}},
+    }
+    result = estimate_query("SELECT l.* FROM left_table l JOIN right_table r ON l.id = r.id", catalog)
+    assert result.processed_bytes == 10 * 24 + 20 * 8
+    assert result.columns_read == {"left_table": ["id", "value"], "right_table": ["id"]}
+    with pytest.raises(UnsupportedQuery, match="ambiguous"):
+        estimate_query("SELECT id FROM left_table l JOIN right_table r ON l.id = r.id", catalog)
+
+
+@pytest.mark.parametrize("sql", [
+    "WITH x AS (SELECT fee FROM tx_plain) SELECT * FROM x",
+    "SELECT * FROM (SELECT fee FROM tx_plain)",
+    "SELECT fee FROM tx_plain UNION ALL SELECT fee FROM tx_plain",
+    "SELECT a.fee FROM tx_plain a JOIN tx_plain b ON a.hash = b.hash",
+])
+def test_unmodeled_query_scopes_are_rejected(sql):
+    with pytest.raises(UnsupportedQuery):
+        estimate_query(sql, CAT)
+
+
+@pytest.mark.parametrize("value", [None, -1, float("nan"), float("inf"), True])
+def test_unknown_or_invalid_variable_lengths_are_not_assumed_zero(value):
+    with pytest.raises(UnsupportedQuery, match="avg_len"):
+        column_bytes({"type": "STRING", "avg_len": value})
+
+
+def test_output_alias_does_not_create_an_extra_scanned_column():
+    sql = "SELECT SUM(fee) AS total_fee FROM tx_plain ORDER BY total_fee"
+    assert mib(sql) == mib("SELECT SUM(fee) FROM tx_plain")

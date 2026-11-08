@@ -58,7 +58,7 @@ These are the checks `tests/test_estimate.py` locks in. The `hash` column is a 6
 ## Use it
 ```
 pip install -r requirements.txt
-python -m pytest -q                 # 22 tests
+python -m pytest -q                 # estimates, scope handling and lint regressions
 python scripts/report.py            # rebuilds the table and chart from measurements/
 PYTHONPATH=src python -m bqcost "SELECT * FROM tx_part_clust LIMIT 10"
 ```
@@ -77,7 +77,8 @@ Lint rules (each tied to a measurement above): `BQ001` SELECT *, `BQ002` LIMIT w
 Model partition and cluster pruning from `INFORMATION_SCHEMA` metadata, build the catalog automatically instead of by hand, and run the same measurements on a table with nested columns of my own.
 
 ## Limits, stated plainly
-- **Estimates are for column pruning only.** The estimator does not model partition or cluster pruning, so filtered queries get an upper bound. It handles single-table queries and simple joins by column name; it refuses unknown tables and types instead of guessing.
+- **Estimates are for column pruning only.** The estimator does not model partition or cluster pruning, so filtered queries get an upper bound. It supports one SELECT scope with cataloged tables and explicit JOIN ON columns. Qualified stars read only their source table; unknown or ambiguous columns are refused. Qualified table names require matching full catalog keys, rather than borrowing another dataset's same-named table metadata.
+- **Unsupported SQL is explicit.** CTEs, subqueries, set operations, self-joins, USING/NATURAL joins and star REPLACE/RENAME are refused. STRING/BYTES estimates require a finite non-negative average byte length; missing metadata is not treated as zero. The linter checks the table alias of partition-column references but cannot prove that a predicate actually prunes data.
 - **Console numbers are dry-run estimates or sandbox job stats, not an invoice.** The sandbox has no billing, so nothing here was charged. Costs are computed from bytes at the list price.
 - **Unit assumption.** The console's GB/TB are binary (the 220.01 MB figure matches 24 bytes x 9,612,337 rows in MiB exactly), and I price them per TiB.
 - **Public-table results are read-only measurements** of one table I did not build. Its layout is not visible to me.
