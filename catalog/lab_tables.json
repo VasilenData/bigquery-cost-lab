@@ -1,0 +1,17 @@
+{
+  "tx_plain": {"rows": 9612337, "partition_column": null, "columns": {
+    "hash": {"type": "STRING", "avg_len": 64}, "block_number": {"type": "INT64"},
+    "block_timestamp": {"type": "TIMESTAMP"}, "input_count": {"type": "INT64"},
+    "output_count": {"type": "INT64"}, "input_value": {"type": "NUMERIC"},
+    "output_value": {"type": "NUMERIC"}, "is_coinbase": {"type": "BOOL"}, "fee": {"type": "NUMERIC"}}},
+  "tx_clust": {"rows": 9612337, "partition_column": null, "columns": {
+    "hash": {"type": "STRING", "avg_len": 64}, "block_number": {"type": "INT64"},
+    "block_timestamp": {"type": "TIMESTAMP"}, "input_count": {"type": "INT64"},
+    "output_count": {"type": "INT64"}, "input_value": {"type": "NUMERIC"},
+    "output_value": {"type": "NUMERIC"}, "is_coinbase": {"type": "BOOL"}, "fee": {"type": "NUMERIC"}}},
+  "tx_part_clust": {"rows": 9612337, "partition_column": "block_timestamp", "columns": {
+    "hash": {"type": "STRING", "avg_len": 64}, "block_number": {"type": "INT64"},
+    "block_timestamp": {"type": "TIMESTAMP"}, "input_count": {"type": "INT64"},
+    "output_count": {"type": "INT64"}, "input_value": {"type": "NUMERIC"},
+    "output_value": {"type": "NUMERIC"}, "is_coinbase": {"type": "BOOL"}, "fee": {"type": "NUMERIC"}}}
+}
