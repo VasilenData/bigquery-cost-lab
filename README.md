@@ -1,5 +1,7 @@
 # BigQuery Cost Lab: what a query costs before you run it
 
+[![ci](https://github.com/VasilenData/bigquery-cost-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/VasilenData/bigquery-cost-lab/actions/workflows/ci.yml)
+
 Measurements of how common SQL habits change BigQuery on-demand cost, plus a small tested tool (`bqcost`) that lints a query and predicts the bytes it will scan. Everything below was measured in the BigQuery console on 2026-11-08, on public data and in a free sandbox project. No money was spent.
 
 **Headline:** `SELECT * ... LIMIT 10` on the public Bitcoin transactions table would scan **2.38 TB (about $14.88)**. Selecting one column scans 90.73 GB ($0.55). Adding a one-day filter on the table's timestamp scans 85.5 MB (under a cent). The LIMIT never mattered.
@@ -63,6 +65,16 @@ PYTHONPATH=src python -m bqcost "SELECT * FROM tx_part_clust LIMIT 10"
 Output for that query: three findings (SELECT *, LIMIT as cost control, no partition filter) and an estimate of 1348 MiB billed.
 
 Lint rules (each tied to a measurement above): `BQ001` SELECT *, `BQ002` LIMIT with no filter or aggregate, `BQ003` no filter on a declared partition column, `BQ004` COUNT(DISTINCT) note (info only). SQL is parsed with [sqlglot](https://github.com/tobymao/sqlglot).
+
+## Decisions and trade-offs
+- **Dry runs over real runs.** A dry run reports bytes without executing or billing, so every public-table number cost nothing and can be reproduced by anyone with a Google account. Only the sandbox experiments ran real jobs.
+- **A parsed query tree instead of regular expressions.** `SELECT * EXCEPT(...)`, table aliases and `COUNT(*)` all break string matching. sqlglot's tree made each of them a tested case.
+- **Refuse rather than guess.** The estimator raises an error for an unknown table or an unmodeled type (ARRAY, STRUCT, JSON). A silent wrong number is worse than no number for a cost tool.
+- **One rule per measurement.** Each lint rule exists because a table above shows what it costs. I left out rules I had not measured.
+- **Binary units.** The console's GB and TB are powers of 1024 (the 220.01 figure only reconciles that way), so prices use per-TiB.
+
+## Next steps
+Model partition and cluster pruning from `INFORMATION_SCHEMA` metadata, build the catalog automatically instead of by hand, and run the same measurements on a table with nested columns of my own.
 
 ## Limits, stated plainly
 - **Estimates are for column pruning only.** The estimator does not model partition or cluster pruning, so filtered queries get an upper bound. It handles single-table queries and simple joins by column name; it refuses unknown tables and types instead of guessing.
