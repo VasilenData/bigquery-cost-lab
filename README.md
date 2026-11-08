@@ -69,7 +69,7 @@ Lint rules (each tied to a measurement above): `BQ001` SELECT *, `BQ002` LIMIT w
 - **Console numbers are dry-run estimates or sandbox job stats, not an invoice.** The sandbox has no billing, so nothing here was charged. Costs are computed from bytes at the list price.
 - **Unit assumption.** The console's GB/TB are binary (the 220.01 MB figure matches 24 bytes x 9,612,337 rows in MiB exactly), and I price them per TiB.
 - **Public-table results are read-only measurements** of one table I did not build. Its layout is not visible to me.
-- **Sandbox quirks found:** a table copy using default options came back with 0 rows because the sandbox's default 60-day partition expiry removed the old partitions; creating it with `OPTIONS(partition_expiration_days=3650)` kept the data. The free storage quota (about 10 GB) was also hit once on a larger copy. Lab tables expire on their own.
+- **Sandbox quirks found:** a table copy using default options came back with 0 rows because the sandbox's default 60-day partition expiry removed the old partitions; creating it with `OPTIONS(partition_expiration_days=3650)` kept the data. The free storage quota (about 10 GB) was also hit once on a larger copy.
 - Prices change. Re-check the pricing page before relying on the dollar figures.
 
 ## Stack
