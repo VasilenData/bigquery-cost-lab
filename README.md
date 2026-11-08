@@ -4,14 +4,14 @@
 
 Measurements of how common SQL habits change BigQuery on-demand cost, plus a small tested tool (`bqcost`) that lints a query and predicts the bytes it will scan. Everything below was measured in the BigQuery console on 2026-11-08, on public data and in a free sandbox project. No money was spent.
 
-**Headline:** `SELECT * ... LIMIT 10` on the public Bitcoin transactions table would scan **2.38 TB (about $14.88)**. Selecting one column scans 90.73 GB ($0.55). Adding a one-day filter on the table's timestamp scans 85.5 MB (under a cent). The LIMIT never mattered.
+**Headline, from dry-run estimates:** `SELECT * ... LIMIT 10` on the public Bitcoin transactions table would scan **2.38 TB (about $14.88 at the stated list price)**. Selecting one column estimates 90.73 GB ($0.55). Adding a one-day filter on the table's timestamp estimates 85.5 MB (under a cent). These are calculated charges before free allowances, not money spent or saved. LIMIT did not reduce the estimated scan in these queries.
 
 ![Bytes scanned by query pattern](reports/public_dryruns.png)
 
 ## 1. Public table, dry-run estimates
 Table: `bigquery-public-data.crypto_bitcoin.transactions`. Method: the console's "This query will process X when run" text for each query. These are dry runs; nothing was executed. Cost uses the on-demand list price of $6.25 per TiB (first 1 TiB per month free) from [Google's pricing page](https://cloud.google.com/bigquery/pricing).
 
-| Query | Console estimate | On-demand cost |
+| Query | Console estimate | Calculated charge before free allowances |
 |---|---|---|
 | SELECT * ... LIMIT 10 | 2.38 TB | $14.88 |
 | SELECT * EXCEPT(inputs, outputs) ... LIMIT 10 | 347.81 GB | $2.12 |
@@ -28,8 +28,8 @@ Table: `bigquery-public-data.crypto_bitcoin.transactions`. Method: the console's
 What this shows:
 - **LIMIT is not a cost control.** Same bytes with or without it.
 - **Two nested columns carry most of the table.** Dropping `inputs` and `outputs` from `SELECT *` cuts 2.38 TB to 347.81 GB.
-- **APPROX_COUNT_DISTINCT scans the same bytes as COUNT(DISTINCT).** It saves compute, not scan cost.
-- **COUNT(*) is free** because BigQuery answers it from table metadata.
+- **APPROX_COUNT_DISTINCT and COUNT(DISTINCT) have the same estimated scan bytes here.** These dry runs do not measure execution time or compute use.
+- **COUNT(*) has a 0-byte estimate in this measurement.** This observation is specific to the query on this public table.
 - **A filter on `block_number` barely helps** (69.59 GB of 90.73 GB), while time filters cut the scan by 2 to 3 orders of magnitude. I did not determine why the `DATE(block_timestamp)` filter prunes so well: the table's DDL is hidden for public datasets, so I report the measurement without claiming a mechanism.
 
 ## 2. Partitioning and clustering, real runs
