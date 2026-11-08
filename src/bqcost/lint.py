@@ -18,11 +18,12 @@ def _real_stars(tree):
     return [s for s in tree.find_all(exp.Star) if not isinstance(s.parent, exp.Count)]
 
 
-def _filters_on(tree, column: str) -> bool:
-    where = tree.find(exp.Where)
+def _filters_on(tree, column: str, alias: str, single: bool) -> bool:
+    where = tree.args.get("where")
     if where is None:
         return False
-    return any(c.name.lower() == column.lower() for c in where.find_all(exp.Column))
+    return any(c.name.lower() == column.lower() and
+               (c.table.lower() == alias or (not c.table and single)) for c in where.find_all(exp.Column))
 
 
 def lint_sql(sql: str, partition_columns: dict[str, str] | None = None) -> list[Finding]:
@@ -39,11 +40,14 @@ def lint_sql(sql: str, partition_columns: dict[str, str] | None = None) -> list[
     if has_limit and not has_filter and not has_agg:
         out.append(Finding("BQ002", "high", "LIMIT does not reduce bytes scanned. Filter on a partition "
                            "column or sample the table instead."))
-    for table in {t.name.lower() for t in tree.find_all(exp.Table)}:
-        col = (partition_columns or {}).get(table)
-        if col and not _filters_on(tree, col):
-            out.append(Finding("BQ003", "high", f"No filter on partition column {col} of {table}; "
-                               "the whole table is scanned."))
+    tables = list(tree.find_all(exp.Table))
+    for table in tables:
+        name, alias = table.name.lower(), (table.alias or table.name).lower()
+        col = (partition_columns or {}).get(name)
+        if col and not _filters_on(tree, col, alias, single=len(tables) == 1):
+            out.append(Finding("BQ003", "high",
+                               f"No matching WHERE filter on partition column {alias}.{col}; "
+                               "check the dry-run estimate before running this query."))
     if any(isinstance(c.this, exp.Distinct) for c in tree.find_all(exp.Count)):
         out.append(Finding("BQ004", "info", "COUNT(DISTINCT x) reads the same bytes as "
                            "APPROX_COUNT_DISTINCT(x); the approximate form saves compute, not scan cost."))
