@@ -61,6 +61,25 @@ def test_cost_uses_list_price():
     assert e.cost_usd == pytest.approx(e.billed_bytes / 2**40 * 6.25)
 
 
+def test_billing_invariants_across_integer_precision_and_mib_boundaries():
+    # Integer catalogs are not limited to the range of exactly representable doubles.
+    boundaries = [0, 1, 9, 10, 11, 1000, 2**33, 2**40, 2**43]
+    for mib_boundary in boundaries:
+        for delta in [-1, 0, 1]:
+            rows = max(0, mib_boundary * MIB // 8 + delta)
+            catalog = {'t': {'rows': rows, 'columns': {'x': {'type': 'INT64'}}}}
+            estimate = estimate_query('SELECT x FROM t', catalog)
+            assert estimate.processed_bytes == rows * 8
+            assert estimate.billed_bytes >= estimate.processed_bytes
+            assert estimate.billed_bytes % MIB == 0
+            if estimate.processed_bytes >= 10 * MIB:
+                assert estimate.billed_bytes - estimate.processed_bytes < MIB
+            elif estimate.processed_bytes:
+                assert estimate.billed_bytes == 10 * MIB
+            else:
+                assert estimate.billed_bytes == 0
+
+
 def test_alias_and_qualified_columns():
     assert mib("SELECT t.fee FROM tx_plain AS t") == pytest.approx(9612337 * 16 / MIB)
 
