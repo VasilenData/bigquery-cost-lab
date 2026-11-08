@@ -52,3 +52,10 @@ def test_count_distinct_is_info_only():
 def test_clean_query_has_no_findings():
     sql = "SELECT fee FROM tx_part_clust WHERE DATE(block_timestamp) = '2020-01-15'"
     assert lint_sql(sql, PARTS) == []
+
+
+def test_filter_on_other_joined_table_does_not_hide_missing_partition_filter():
+    sql = ("SELECT p.fee FROM tx_part_clust p JOIN tx_plain q ON p.hash=q.hash "
+           "WHERE q.block_timestamp > '2020-01-01'")
+    assert "BQ003" in rules(sql, PARTS)
+    assert "BQ003" not in rules(sql.replace("WHERE q.", "WHERE p."), PARTS)
