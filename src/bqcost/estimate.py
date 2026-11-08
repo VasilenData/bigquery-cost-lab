@@ -129,5 +129,6 @@ def estimate_query(sql: str, catalog: dict) -> Estimate:
         nbytes = math.ceil(sum(column_bytes(cols[c]) for c in read) * rows)
         processed += nbytes
         if nbytes:
-            billed += max(math.ceil(nbytes / MIB) * MIB, MIN_BILLED_PER_TABLE)
+            # Keep integer byte counts exact above float's 53-bit mantissa.
+            billed += max(((nbytes + MIB - 1) // MIB) * MIB, MIN_BILLED_PER_TABLE)
     return Estimate(processed, billed, billed / 2**40 * PRICE_PER_TIB_USD, columns_read)
