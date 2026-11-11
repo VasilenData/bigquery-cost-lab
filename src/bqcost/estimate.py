@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from fractions import Fraction
 
 import sqlglot
 from sqlglot import exp
@@ -35,6 +36,19 @@ def column_bytes(col: dict) -> float:
             raise UnsupportedQuery(f"{t} requires a finite non-negative avg_len")
         return (2 if t == "STRING" else 0) + length
     raise UnsupportedQuery(f"type {t} is not modeled")
+
+
+def _exact_column_bytes(col: dict) -> Fraction:
+    """Interpret catalog decimal lengths before adding overhead or multiplying rows.
+
+    JSON float metadata remains an estimate; exact arithmetic prevents *additional*
+    float rounding from understating whole-byte counts at large row counts.
+    """
+    size = column_bytes(col)  # Keep the public metadata/type validation in one place.
+    kind = col["type"].upper()
+    if kind in {"STRING", "BYTES"}:
+        return Fraction(str(col["avg_len"])) + (2 if kind == "STRING" else 0)
+    return Fraction(size)
 
 
 @dataclass
@@ -126,7 +140,7 @@ def estimate_query(sql: str, catalog: dict) -> Estimate:
         cols = schemas[alias]
         read = sorted(resolved[alias])
         columns_read[name] = read
-        nbytes = math.ceil(sum(column_bytes(cols[c]) for c in read) * rows)
+        nbytes = math.ceil(sum((_exact_column_bytes(cols[c]) for c in read), Fraction()) * rows)
         processed += nbytes
         if nbytes:
             # Keep integer byte counts exact above float's 53-bit mantissa.
