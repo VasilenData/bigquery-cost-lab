@@ -53,7 +53,7 @@ BigQuery documents per-type storage sizes (INT64 8 bytes, NUMERIC 16, BOOL 1, ST
 | SELECT * | 1347.55 MiB | 1.32 GB (= 1347.5 MiB) |
 | SUM(fee) WHERE block_number ... (fee NUMERIC + block_number INT64) | 220.01 MiB | 220.01 MB |
 
-These are the checks `tests/test_estimate.py` locks in. Billing ceilings use integer arithmetic, including counters beyond floating-point integer precision; boundary tests require billed bytes to cover processed bytes and round to whole MiB without an extra MiB at exact boundaries. The `hash` column is a 64-character string, so I used an average length of 64 (66 bytes per value).
+These are the checks `tests/test_estimate.py` locks in. Catalog average byte lengths are interpreted as decimal values and combined with exact rational arithmetic before multiplying by row counts and taking one byte ceiling per table. This avoids both lost bytes above 2^53 rows and an extra byte from binary `0.1 + 0.2` rounding. It does not make estimated average lengths or null-density assumptions exact. Billing ceilings use integer arithmetic, including counters beyond floating-point integer precision; boundary tests require billed bytes to cover processed bytes and round to whole MiB without an extra MiB at exact boundaries. The `hash` column is a 64-character string, so I used an average length of 64 (66 bytes per value).
 
 ## Use it
 ```
