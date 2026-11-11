@@ -131,3 +131,32 @@ def test_unknown_or_invalid_variable_lengths_are_not_assumed_zero(value):
 def test_output_alias_does_not_create_an_extra_scanned_column():
     sql = "SELECT SUM(fee) AS total_fee FROM tx_plain ORDER BY total_fee"
     assert mib(sql) == mib("SELECT SUM(fee) FROM tx_plain")
+
+
+@pytest.mark.parametrize("kind,avg_len,rows,expected", [
+    ("STRING", 0.0, 2**53 + 1, 2 * (2**53 + 1)),
+    ("BYTES", 1.0, 2**53 + 1, 2**53 + 1),
+    ("STRING", 0.1, 10, 21),
+    ("STRING", 0.1, 11, 24),
+    ("BYTES", 0.01, 100, 1),
+    ("BYTES", 0.01, 101, 2),
+    ("STRING", 2**53 + 1, 1, 2**53 + 3),
+])
+def test_decimal_metadata_has_exact_whole_byte_ceiling(kind, avg_len, rows, expected):
+    catalog = {"t": {"rows": rows, "columns": {"x": {"type": kind, "avg_len": avg_len}}}}
+    result = estimate_query("SELECT x FROM t", catalog)
+    assert result.processed_bytes == expected
+    assert result.billed_bytes >= expected
+    if expected >= 10 * MIB:
+        assert result.billed_bytes - expected < MIB
+
+
+def test_fractional_column_sizes_sum_before_the_single_table_ceiling():
+    # 0.1 + 0.2 is exactly 0.3 in catalog decimal units: 10 rows consume 3 bytes.
+    # Floating-point multiplication used to produce ceil(3.0000000000000004)=4.
+    catalog = {"t": {"rows": 10, "columns": {
+        "a": {"type": "BYTES", "avg_len": 0.1},
+        "b": {"type": "BYTES", "avg_len": 0.2},
+    }}}
+    assert estimate_query("SELECT a,b FROM t", catalog).processed_bytes == 3
+    assert estimate_query("SELECT b,a FROM t", catalog).processed_bytes == 3
