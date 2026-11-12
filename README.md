@@ -64,6 +64,13 @@ PYTHONPATH=src python -m bqcost "SELECT * FROM tx_part_clust LIMIT 10"
 ```
 Output for that query: three findings (SELECT *, LIMIT as cost control, no partition filter) and an estimate of 1348 MiB billed.
 
+To build a catalog for your own dataset instead of writing it by hand, export `INFORMATION_SCHEMA.COLUMNS` (`table_name, column_name, data_type, is_partitioning_column`) and `INFORMATION_SCHEMA.TABLE_STORAGE` (`table_name, total_rows`) from the console, then:
+```
+PYTHONPATH=src python -m bqcost.catalog columns.csv --storage storage.csv --avg-len my_table.my_string_col=64 -o catalog/mine.json
+PYTHONPATH=src python -m bqcost --catalog catalog/mine.json "SELECT ..."
+```
+Metadata does not include the average length of STRING and BYTES values, so those columns have no `avg_len` unless you pass `--avg-len`, and the estimator refuses to price a query that reads one. Types like `NUMERIC(10, 2)` are stored as `NUMERIC`. I tested this by rebuilding the hand-written lab catalog from its own column list and checking it comes out identical; I have not yet run it on a live `INFORMATION_SCHEMA` export from BigQuery.
+
 Lint rules (each tied to a measurement above): `BQ001` SELECT *, `BQ002` LIMIT with no filter or aggregate, `BQ003` no filter on a declared partition column, `BQ004` COUNT(DISTINCT) note (info only). SQL is parsed with [sqlglot](https://github.com/tobymao/sqlglot).
 
 ## Decisions and trade-offs
@@ -74,7 +81,7 @@ Lint rules (each tied to a measurement above): `BQ001` SELECT *, `BQ002` LIMIT w
 - **Binary units.** The console's GB and TB are powers of 1024 (the 220.01 figure only reconciles that way), so prices use per-TiB.
 
 ## Next steps
-Model partition and cluster pruning from `INFORMATION_SCHEMA` metadata, build the catalog automatically instead of by hand, and run the same measurements on a table with nested columns of my own.
+Model partition and cluster pruning from `INFORMATION_SCHEMA` metadata, try the catalog builder on a live `INFORMATION_SCHEMA` export, and run the same measurements on a table with nested columns of my own.
 
 ## Limits, stated plainly
 - **Estimates are for column pruning only.** The estimator does not model partition or cluster pruning, so filtered queries get an upper bound. It supports one SELECT scope with cataloged tables and explicit JOIN ON columns. Qualified stars read only their source table; unknown or ambiguous columns are refused. Qualified table names require matching full catalog keys, rather than borrowing another dataset's same-named table metadata.
