@@ -18,9 +18,11 @@ def main() -> int:
         print(f"[{f.severity}] {f.rule}: {f.message}")
     try:
         e = estimate_query(args.sql, cat)
+        pruned = [f"{t}: {k} of {n} partitions" for t, (k, n) in e.partitions_read.items()]
+        note = "partition pruning applied, " + ", ".join(pruned) if pruned else "upper bound if filtered"
         proc, billed = e.processed_bytes / 2**20, e.billed_bytes / 2**20
         print(f"estimate: {proc:.2f} MiB processed, {billed:.0f} MiB billed, "
-              f"about ${e.cost_usd:.6f} (upper bound if filtered)")
+              f"about ${e.cost_usd:.6f} ({note})")
     except UnsupportedQuery as err:
         print(f"estimate unavailable: {err}", file=sys.stderr)
     return 0
