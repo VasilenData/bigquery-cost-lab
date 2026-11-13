@@ -1,7 +1,8 @@
 """Predict bytes scanned from table metadata, using BigQuery's documented per-type sizes.
 
-Scope, stated plainly: this models column pruning only (which columns a query reads). It does not model
-partition or cluster pruning, so for filtered queries the result is an upper bound.
+Scope, stated plainly: this models column pruning (which columns a query reads), plus daily partition pruning
+when the catalog lists per-partition row counts (see pruning.py). It does not model cluster pruning, so
+otherwise filtered queries get an upper bound.
 """
 from __future__ import annotations
 
@@ -11,6 +12,8 @@ from fractions import Fraction
 
 import sqlglot
 from sqlglot import exp
+
+from .pruning import prune_partitions
 
 PRICE_PER_TIB_USD = 6.25          # on-demand list price, https://cloud.google.com/bigquery/pricing
 MIB = 2**20
@@ -57,6 +60,7 @@ class Estimate:
     billed_bytes: int
     cost_usd: float
     columns_read: dict[str, list[str]] = field(default_factory=dict)
+    partitions_read: dict[str, tuple[int, int]] = field(default_factory=dict)  # table -> (kept, total)
 
 
 def _tables_in(tree: exp.Expression) -> dict[str, str]:
@@ -126,6 +130,7 @@ def estimate_query(sql: str, catalog: dict) -> Estimate:
         raise UnsupportedQuery("no table referenced")
     processed = billed = 0
     columns_read: dict[str, list[str]] = {}
+    partitions_read: dict[str, tuple[int, int]] = {}
     schemas = {}
     for alias, name in tables.items():
         if name not in catalog:
@@ -138,6 +143,11 @@ def estimate_query(sql: str, catalog: dict) -> Estimate:
         if isinstance(rows, bool) or not isinstance(rows, int) or rows < 0:
             raise UnsupportedQuery(f"table {name} requires a non-negative integer row count")
         cols = schemas[alias]
+        if len(tables) == 1:  # pruning is modeled for single-table queries only
+            pruned = prune_partitions(tree, name, alias, meta)
+            if pruned is not None:
+                rows, kept, total = pruned
+                partitions_read[name] = (kept, total)
         read = sorted(resolved[alias])
         columns_read[name] = read
         nbytes = math.ceil(sum((_exact_column_bytes(cols[c]) for c in read), Fraction()) * rows)
@@ -145,4 +155,5 @@ def estimate_query(sql: str, catalog: dict) -> Estimate:
         if nbytes:
             # Keep integer byte counts exact above float's 53-bit mantissa.
             billed += max(((nbytes + MIB - 1) // MIB) * MIB, MIN_BILLED_PER_TABLE)
-    return Estimate(processed, billed, billed / 2**40 * PRICE_PER_TIB_USD, columns_read)
+    return Estimate(processed, billed, billed / 2**40 * PRICE_PER_TIB_USD, columns_read,
+                    partitions_read)
