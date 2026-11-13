@@ -71,6 +71,15 @@ PYTHONPATH=src python -m bqcost --catalog catalog/mine.json "SELECT ..."
 ```
 Metadata does not include the average length of STRING and BYTES values, so those columns have no `avg_len` unless you pass `--avg-len`, and the estimator refuses to price a query that reads one. Types like `NUMERIC(10, 2)` are stored as `NUMERIC`. I tested this by rebuilding the hand-written lab catalog from its own column list and checking it comes out identical; I have not yet run it on a live `INFORMATION_SCHEMA` export from BigQuery.
 
+### Partition pruning (optional)
+If a catalog entry has a `partition_column` of type DATE, TIMESTAMP or DATETIME and a `partitions` map of daily partition id to row count (the `partition_id` and `total_rows` columns of `INFORMATION_SCHEMA.PARTITIONS`), the estimator drops the partitions the WHERE clause rules out and prices only the remaining rows:
+```
+"tx_part_clust": {"rows": 9612337, "partition_column": "block_timestamp", "partitions": {"20200101": 310000, ...}, "columns": {...}}
+```
+It understands a top-level AND of `=`, `<`, `<=`, `>`, `>=` and `BETWEEN` against date literals (`'2020-01-15'` or `DATE '2020-01-15'`), on the column itself or on `DATE(column)`. A bare TIMESTAMP column compared with `>` a midnight literal keeps that day, because later rows on that day still match. Everything else (OR, NOT, other functions, TIMESTAMP literals, joins, hourly or monthly partitions, `__NULL__` partitions) keeps every partition, so the number stays an upper bound. The CLI says when pruning was applied.
+
+Check against my lab: I did not save per-day row counts of the January copy, so I cannot test this on the real partitions. If the 31 days were exactly equal, the one-day query would predict 7.10 MiB; the real job processed 7.61 MiB, about 7% more, so days are not equal. The tests use synthetic partitions with unequal sizes instead. The catalog builder does not read `PARTITIONS` yet; add the map by hand.
+
 Lint rules (each tied to a measurement above): `BQ001` SELECT *, `BQ002` LIMIT with no filter or aggregate, `BQ003` no filter on a declared partition column, `BQ004` COUNT(DISTINCT) note (info only). SQL is parsed with [sqlglot](https://github.com/tobymao/sqlglot).
 
 ## Decisions and trade-offs
@@ -81,10 +90,10 @@ Lint rules (each tied to a measurement above): `BQ001` SELECT *, `BQ002` LIMIT w
 - **Binary units.** The console's GB and TB are powers of 1024 (the 220.01 figure only reconciles that way), so prices use per-TiB.
 
 ## Next steps
-Model partition and cluster pruning from `INFORMATION_SCHEMA` metadata, try the catalog builder on a live `INFORMATION_SCHEMA` export, and run the same measurements on a table with nested columns of my own.
+Try the catalog builder and the partition pruning model on a live `INFORMATION_SCHEMA` export (including `PARTITIONS`), model cluster pruning, and run the same measurements on a table with nested columns of my own.
 
 ## Limits, stated plainly
-- **Estimates are for column pruning only.** The estimator does not model partition or cluster pruning, so filtered queries get an upper bound. It supports one SELECT scope with cataloged tables and explicit JOIN ON columns. Qualified stars read only their source table; unknown or ambiguous columns are refused. Qualified table names require matching full catalog keys, rather than borrowing another dataset's same-named table metadata.
+- **Estimates are for column pruning, plus daily partition pruning when the catalog lists partitions.** Cluster pruning is not modeled, and a filtered query on a table without a partition listing gets an upper bound. It supports one SELECT scope with cataloged tables and explicit JOIN ON columns. Qualified stars read only their source table; unknown or ambiguous columns are refused. Qualified table names require matching full catalog keys, rather than borrowing another dataset's same-named table metadata.
 - **Unsupported SQL is explicit.** CTEs, subqueries, set operations, self-joins, USING/NATURAL joins and star REPLACE/RENAME are refused. STRING/BYTES estimates require a finite non-negative average byte length; missing metadata is not treated as zero. The linter checks the table alias of partition-column references but cannot prove that a predicate actually prunes data.
 - **Console numbers are dry-run estimates or sandbox job stats, not an invoice.** The sandbox has no billing, so nothing here was charged. Costs are computed from bytes at the list price.
 - **Unit assumption.** The console's GB/TB are binary (the 220.01 MB figure matches 24 bytes x 9,612,337 rows in MiB exactly), and I price them per TiB.
