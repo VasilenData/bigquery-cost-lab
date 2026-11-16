@@ -78,7 +78,7 @@ If a catalog entry has a `partition_column` of type DATE, TIMESTAMP or DATETIME 
 ```
 It understands a top-level AND of `=`, `<`, `<=`, `>`, `>=` and `BETWEEN` against date literals (`'2020-01-15'` or `DATE '2020-01-15'`), on the column itself or on `DATE(column)`. A bare TIMESTAMP column compared with `>` a midnight literal keeps that day, because later rows on that day still match. Everything else (OR, NOT, other functions, TIMESTAMP literals, joins, hourly or monthly partitions, `__NULL__` partitions) keeps every partition, so the number stays an upper bound. The CLI says when pruning was applied.
 
-Check against my lab: I did not save per-day row counts of the January copy, so I cannot test this on the real partitions. If the 31 days were exactly equal, the one-day query would predict 7.10 MiB; the real job processed 7.61 MiB, about 7% more, so days are not equal. The tests use synthetic partitions with unequal sizes instead. The catalog builder does not read `PARTITIONS` yet; add the map by hand.
+Check against my lab: I did not save per-day row counts of the January copy, so I cannot test this on the real partitions. If the 31 days were exactly equal, the one-day query would predict 7.10 MiB; the real job processed 7.61 MiB, about 7% more, so days are not equal. The tests use synthetic partitions with unequal sizes instead. To build the map from an export instead of by hand, pass `--partitions parts.csv` (columns `table_name, partition_id, total_rows` from `INFORMATION_SCHEMA.PARTITIONS`) to `bqcost.catalog`. It refuses duplicate partitions, empty ids, non-integer or negative counts, and a partition list for a table with no partitioning column. Special ids such as `__NULL__` are stored as given and make the estimator keep every partition. I tested this on synthetic exports, not on a live `PARTITIONS` query.
 
 Lint rules (each tied to a measurement above): `BQ001` SELECT *, `BQ002` LIMIT with no filter or aggregate, `BQ003` no filter on a declared partition column, `BQ004` COUNT(DISTINCT) note (info only). SQL is parsed with [sqlglot](https://github.com/tobymao/sqlglot).
 
@@ -90,7 +90,7 @@ Lint rules (each tied to a measurement above): `BQ001` SELECT *, `BQ002` LIMIT w
 - **Binary units.** The console's GB and TB are powers of 1024 (the 220.01 figure only reconciles that way), so prices use per-TiB.
 
 ## Next steps
-Try the catalog builder and the partition pruning model on a live `INFORMATION_SCHEMA` export (including `PARTITIONS`), model cluster pruning, and run the same measurements on a table with nested columns of my own.
+Try the catalog builder (including `--partitions`) and the partition pruning model on a live `INFORMATION_SCHEMA` export, model cluster pruning, and run the same measurements on a table with nested columns of my own.
 
 ## Limits, stated plainly
 - **Estimates are for column pruning, plus daily partition pruning when the catalog lists partitions.** Cluster pruning is not modeled, and a filtered query on a table without a partition listing gets an upper bound. It supports one SELECT scope with cataloged tables and explicit JOIN ON columns. Qualified stars read only their source table; unknown or ambiguous columns are refused. Qualified table names require matching full catalog keys, rather than borrowing another dataset's same-named table metadata.
