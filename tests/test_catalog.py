@@ -3,7 +3,7 @@ import pathlib
 
 import pytest
 
-from bqcost.catalog import CatalogError, base_type, build_catalog, main
+from bqcost.catalog import CatalogError, base_type, build_catalog, main, partition_map
 from bqcost.estimate import UnsupportedQuery, estimate_query
 
 LAB = json.loads((pathlib.Path(__file__).parents[1] / "catalog" / "lab_tables.json").read_text())
@@ -114,3 +114,69 @@ def test_csv_input_and_error_exit_code(tmp_path, capsys):
     assert "NAME=VALUE" in capsys.readouterr().err
     assert main([str(p), "--rows", "t=x"]) == 2
     assert "bad value" in capsys.readouterr().err
+
+
+PARTS = [
+    {"table_name": "t", "partition_id": "20240101", "total_rows": "30"},
+    {"table_name": "t", "partition_id": "20240102", "total_rows": 70},
+]
+
+
+def test_partition_map_reads_csv_style_strings_and_ints():
+    assert partition_map(PARTS) == {"t": {"20240101": 30, "20240102": 70}}
+
+
+def test_build_catalog_attaches_partitions_only_when_given():
+    assert "partitions" not in build_catalog(COLS, {"t": 100})["t"]
+    cat = build_catalog(COLS, {"t": 100}, partitions=partition_map(PARTS))
+    assert cat["t"]["partitions"] == {"20240101": 30, "20240102": 70}
+
+
+def test_partition_errors():
+    with pytest.raises(CatalogError, match="duplicate partition t.20240101"):
+        partition_map(PARTS[:1] + PARTS[:1])
+    with pytest.raises(CatalogError, match="missing partition_id"):
+        partition_map([{"table_name": "t", "total_rows": 1}])
+    with pytest.raises(CatalogError, match="empty partition_id"):
+        partition_map([{"table_name": "t", "partition_id": "", "total_rows": 1}])
+    with pytest.raises(CatalogError, match="empty partition_id"):
+        partition_map([{"table_name": "t", "partition_id": None, "total_rows": 1}])
+    with pytest.raises(CatalogError, match="not an integer"):
+        partition_map([{"table_name": "t", "partition_id": "20240101", "total_rows": "x"}])
+    with pytest.raises(CatalogError, match="negative"):
+        partition_map([{"table_name": "t", "partition_id": "20240101", "total_rows": -1}])
+    with pytest.raises(CatalogError, match="unknown table nope"):
+        build_catalog(COLS, {"t": 1}, partitions={"nope": {"20240101": 1}})
+    with pytest.raises(CatalogError, match="no partitioning column"):
+        build_catalog(COLS[:1], {"t": 1}, partitions={"t": {"20240101": 1}})
+
+
+def test_partition_export_feeds_pruning_end_to_end(tmp_path, capsys):
+    cols = tmp_path / "cols.csv"
+    cols.write_text("table_name,column_name,data_type,is_partitioning_column\nt,id,INT64,NO\nt,d,DATE,YES\n")
+    parts = tmp_path / "parts.csv"
+    parts.write_text("table_name,partition_id,total_rows\nt,20240101,30\nt,20240102,70\n")
+    out = tmp_path / "cat.json"
+    assert main([str(cols), "--rows", "t=100", "--partitions", str(parts), "-o", str(out)]) == 0
+    cat = json.loads(out.read_text())
+    full = estimate_query("SELECT id FROM t", cat)
+    one = estimate_query("SELECT id FROM t WHERE d = '2024-01-01'", cat)
+    assert full.processed_bytes == 800  # 100 rows x 8 bytes
+    assert one.processed_bytes == 360  # 30 rows x (id 8 + d 4) bytes
+    assert one.partitions_read == {"t": (1, 2)}
+
+
+def test_cli_partition_error_exit_code(tmp_path, capsys):
+    cols = tmp_path / "cols.csv"
+    cols.write_text("table_name,column_name,data_type,is_partitioning_column\nt,id,INT64,NO\n")
+    parts = tmp_path / "parts.csv"
+    parts.write_text("table_name,partition_id,total_rows\nt,20240101,5\n")
+    assert main([str(cols), "--rows", "t=5", "--partitions", str(parts)]) == 2
+    assert "no partitioning column" in capsys.readouterr().err
+
+
+def test_partition_id_whitespace_and_numeric_ids_are_normalized():
+    rows = [{"table_name": "t", "partition_id": " 20240101 ", "total_rows": 1}]
+    assert partition_map(rows) == {"t": {"20240101": 1}}
+    rows = [{"table_name": "t", "partition_id": 20240102, "total_rows": 1}]
+    assert partition_map(rows) == {"t": {"20240102": 1}}
