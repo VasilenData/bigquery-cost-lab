@@ -4,7 +4,9 @@ Input is what BigQuery returns for
     SELECT table_name, column_name, data_type, is_partitioning_column
     FROM `project.dataset`.INFORMATION_SCHEMA.COLUMNS
 exported as CSV or JSON (a list of row objects) from the console. Row counts come from
-`INFORMATION_SCHEMA.TABLE_STORAGE` (total_rows) or from --rows.
+`INFORMATION_SCHEMA.TABLE_STORAGE` (total_rows) or from --rows. Optional --partitions takes an export of
+`INFORMATION_SCHEMA.PARTITIONS` (table_name, partition_id, total_rows) and adds the per-partition row
+counts that the estimator uses for partition pruning.
 
 What metadata cannot give you: the average length of STRING and BYTES values. Those columns get
 no avg_len unless you pass --avg-len table.column=N, and the estimator refuses to price a query that
@@ -43,8 +45,39 @@ def load_rows(path: str) -> list[dict]:
     return list(csv.DictReader(text.splitlines()))
 
 
+def _row_count(value, where: str) -> int:
+    try:
+        n = int(str(value).strip())
+    except (TypeError, ValueError):
+        raise CatalogError(f"{where}: total_rows {value!r} is not an integer") from None
+    if n < 0:
+        raise CatalogError(f"{where}: total_rows {n} is negative")
+    return n
+
+
+def partition_map(partition_rows: list[dict]) -> dict[str, dict[str, int]]:
+    """INFORMATION_SCHEMA.PARTITIONS rows -> {table: {partition_id: total_rows}}."""
+    out: dict[str, dict[str, int]] = {}
+    for r in partition_rows:
+        try:
+            table, pid, total = r["table_name"], r["partition_id"], r["total_rows"]
+        except KeyError as e:
+            raise CatalogError(f"partition row is missing {e.args[0]}: {r}") from None
+        if pid is None or str(pid).strip() == "":
+            raise CatalogError(f"{table}: empty partition_id (is the table partitioned?)")
+        pid = str(pid).strip()
+        parts = out.setdefault(table, {})
+        if pid in parts:
+            raise CatalogError(f"duplicate partition {table}.{pid}")
+        parts[pid] = _row_count(total, f"{table}.{pid}")
+    return out
+
+
 def build_catalog(
-    columns: list[dict], rows: dict[str, int] | None = None, avg_len: dict[str, float] | None = None
+    columns: list[dict],
+    rows: dict[str, int] | None = None,
+    avg_len: dict[str, float] | None = None,
+    partitions: dict[str, dict[str, int]] | None = None,
 ) -> dict:
     rows = rows or {}
     avg_len = avg_len or {}
@@ -67,6 +100,12 @@ def build_catalog(
         if table not in cat:
             raise CatalogError(f"row count given for unknown table {table}")
         cat[table]["rows"] = n
+    for table, parts in (partitions or {}).items():
+        if table not in cat:
+            raise CatalogError(f"partitions given for unknown table {table}")
+        if cat[table]["partition_column"] is None:
+            raise CatalogError(f"partitions given for {table}, which has no partitioning column")
+        cat[table]["partitions"] = dict(parts)
     missing = sorted(t for t, e in cat.items() if e["rows"] is None)
     if missing:
         raise CatalogError("no row count for: " + ", ".join(missing))
@@ -90,6 +129,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="bqcost.catalog", description=__doc__.split("\n")[0])
     ap.add_argument("columns", help="INFORMATION_SCHEMA.COLUMNS export (.csv or .json)")
     ap.add_argument("--storage", help="TABLE_STORAGE export with table_name,total_rows")
+    ap.add_argument("--partitions", help="PARTITIONS export with table_name,partition_id,total_rows")
     ap.add_argument("--rows", action="append", metavar="TABLE=N", help="row count for a table")
     ap.add_argument(
         "--avg-len", action="append", metavar="TABLE.COLUMN=N", help="average length of a STRING/BYTES column"
@@ -101,7 +141,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.storage:
             rows.update({r["table_name"]: int(r["total_rows"]) for r in load_rows(args.storage)})
         rows.update(_pairs(args.rows, int))
-        cat = build_catalog(load_rows(args.columns), rows, _pairs(args.avg_len, float))
+        parts = partition_map(load_rows(args.partitions)) if args.partitions else None
+        cat = build_catalog(load_rows(args.columns), rows, _pairs(args.avg_len, float), parts)
     except (CatalogError, OSError, KeyError, ValueError) as err:
         print(f"catalog error: {err}", file=sys.stderr)
         return 2
