@@ -26,8 +26,13 @@ def _filters_on(tree, column: str, alias: str, single: bool) -> bool:
                (c.table.lower() == alias or (not c.table and single)) for c in where.find_all(exp.Column))
 
 
-def lint_sql(sql: str, partition_columns: dict[str, str] | None = None) -> list[Finding]:
-    """Return findings for one statement. partition_columns maps table name -> partition column."""
+def lint_sql(
+    sql: str,
+    partition_columns: dict[str, str] | None = None,
+    cluster_columns: dict[str, list[str]] | None = None,
+) -> list[Finding]:
+    """Return findings for one statement. partition_columns maps table name -> partition column;
+    cluster_columns maps table name -> clustering columns in order."""
     tree = sqlglot.parse_one(sql, read="bigquery")
     out: list[Finding] = []
     stars = _real_stars(tree)
@@ -48,6 +53,13 @@ def lint_sql(sql: str, partition_columns: dict[str, str] | None = None) -> list[
             out.append(Finding("BQ003", "high",
                                f"No matching WHERE filter on partition column {alias}.{col}; "
                                "check the dry-run estimate before running this query."))
+    for table in tables:
+        name, alias = table.name.lower(), (table.alias or table.name).lower()
+        cols = (cluster_columns or {}).get(name)
+        if cols and not _filters_on(tree, cols[0], alias, single=len(tables) == 1):
+            out.append(Finding("BQ005", "info",
+                               f"{alias} is clustered by {', '.join(cols)} but there is no WHERE filter on "
+                               f"the leading column {cols[0]}, so clustering cannot reduce bytes scanned."))
     if any(isinstance(c.this, exp.Distinct) for c in tree.find_all(exp.Count)):
         out.append(Finding("BQ004", "info", "COUNT(DISTINCT x) reads the same bytes as "
                            "APPROX_COUNT_DISTINCT(x); the approximate form saves compute, not scan cost."))
