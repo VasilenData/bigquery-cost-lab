@@ -14,7 +14,8 @@ def main() -> int:
     with open(args.catalog) as f:
         cat = json.load(f)
     parts = {k: v["partition_column"] for k, v in cat.items() if v.get("partition_column")}
-    for f in lint_sql(args.sql, parts):
+    clusters = {k: v["cluster_columns"] for k, v in cat.items() if v.get("cluster_columns")}
+    for f in lint_sql(args.sql, parts, clusters):
         print(f"[{f.severity}] {f.rule}: {f.message}")
     try:
         e = estimate_query(args.sql, cat)
