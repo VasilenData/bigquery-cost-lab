@@ -1,9 +1,11 @@
 """Build a bqcost catalog from INFORMATION_SCHEMA exports instead of writing it by hand.
 
 Input is what BigQuery returns for
-    SELECT table_name, column_name, data_type, is_partitioning_column
+    SELECT table_name, column_name, data_type, is_partitioning_column, clustering_ordinal_position
     FROM `project.dataset`.INFORMATION_SCHEMA.COLUMNS
-exported as CSV or JSON (a list of row objects) from the console. Row counts come from
+exported as CSV or JSON (a list of row objects) from the console. clustering_ordinal_position is optional;
+when present, the clustering columns are stored in order as "cluster_columns" (the linter uses them).
+Row counts come from
 `INFORMATION_SCHEMA.TABLE_STORAGE` (total_rows) or from --rows. Optional --partitions takes an export of
 `INFORMATION_SCHEMA.PARTITIONS` (table_name, partition_id, total_rows) and adds the per-partition row
 counts that the estimator uses for partition pruning.
@@ -55,6 +57,19 @@ def _row_count(value, where: str) -> int:
     return n
 
 
+def _cluster_position(value, where: str) -> int | None:
+    """clustering_ordinal_position: empty/NULL means not clustered, otherwise an integer >= 1."""
+    if value is None or str(value).strip().lower() in {"", "null", "none"}:
+        return None
+    try:
+        n = int(str(value).strip())
+    except ValueError:
+        raise CatalogError(f"{where}: clustering_ordinal_position {value!r} is not an integer") from None
+    if n < 1:
+        raise CatalogError(f"{where}: clustering_ordinal_position {n} must be at least 1")
+    return n
+
+
 def partition_map(partition_rows: list[dict]) -> dict[str, dict[str, int]]:
     """INFORMATION_SCHEMA.PARTITIONS rows -> {table: {partition_id: total_rows}}."""
     out: dict[str, dict[str, int]] = {}
@@ -82,6 +97,7 @@ def build_catalog(
     rows = rows or {}
     avg_len = avg_len or {}
     cat: dict = {}
+    positions: dict[str, dict[int, str]] = {}
     for r in columns:
         try:
             table, name, dtype = r["table_name"], r["column_name"], r["data_type"]
@@ -96,6 +112,13 @@ def build_catalog(
         entry["columns"][name] = col
         if str(r.get("is_partitioning_column", "NO")).upper() == "YES":
             entry["partition_column"] = name
+        pos = _cluster_position(r.get("clustering_ordinal_position"), f"{table}.{name}")
+        if pos is not None:
+            if pos in positions.setdefault(table, {}):
+                raise CatalogError(f"{table}: two columns share clustering position {pos}")
+            positions[table][pos] = name
+    for table, by_pos in positions.items():
+        cat[table]["cluster_columns"] = [by_pos[p] for p in sorted(by_pos)]
     for table, n in rows.items():
         if table not in cat:
             raise CatalogError(f"row count given for unknown table {table}")
