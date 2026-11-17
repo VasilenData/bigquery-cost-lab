@@ -73,6 +73,9 @@ def test_rebuilds_the_hand_written_lab_catalog(tmp_path):
             "column_name": c,
             "data_type": v["type"],
             "is_partitioning_column": "YES" if c == e["partition_column"] else "NO",
+            "clustering_ordinal_position": (
+                e["cluster_columns"].index(c) + 1 if c in e.get("cluster_columns", []) else None
+            ),
         }
         for t, e in LAB.items()
         for c, v in e["columns"].items()
@@ -180,3 +183,53 @@ def test_partition_id_whitespace_and_numeric_ids_are_normalized():
     assert partition_map(rows) == {"t": {"20240101": 1}}
     rows = [{"table_name": "t", "partition_id": 20240102, "total_rows": 1}]
     assert partition_map(rows) == {"t": {"20240102": 1}}
+
+
+# --- clustering_ordinal_position -> cluster_columns ---
+
+def _cols(*positions):
+    names = ["id", "ts", "fee", "h"]
+    return [{"table_name": "t", "column_name": n, "data_type": "INT64", "clustering_ordinal_position": p}
+            for n, p in zip(names, positions, strict=True)]
+
+
+def test_cluster_columns_are_ordered_by_position_not_row_order():
+    cat = build_catalog(_cols("2", "", "1", None), {"t": 5})
+    assert cat["t"]["cluster_columns"] == ["fee", "id"]
+
+
+@pytest.mark.parametrize("empty", ["", None, "NULL", "null", " "])
+def test_unclustered_table_has_no_cluster_key(empty):
+    cat = build_catalog(_cols(empty, empty, empty, empty), {"t": 5})
+    assert "cluster_columns" not in cat["t"]
+
+
+def test_export_without_the_column_still_works():
+    assert "cluster_columns" not in build_catalog(COLS, {"t": 5, }, {"t.h": 8})["t"]
+
+
+@pytest.mark.parametrize("bad", ["x", "1.5", "0", "-1"])
+def test_bad_cluster_position_is_refused(bad):
+    with pytest.raises(CatalogError, match="clustering_ordinal_position"):
+        build_catalog(_cols(bad, None, None, None), {"t": 5})
+
+
+def test_duplicate_cluster_position_is_refused():
+    with pytest.raises(CatalogError, match="share clustering position 1"):
+        build_catalog(_cols("1", "1", None, None), {"t": 5})
+
+
+def test_cluster_columns_do_not_change_the_estimate():
+    plain = build_catalog(_cols(None, None, None, None), {"t": 1000})
+    clustered = build_catalog(_cols("1", None, None, None), {"t": 1000})
+    sql = "SELECT SUM(id) FROM t WHERE id = 3"
+    assert estimate_query(sql, plain).processed_bytes == estimate_query(sql, clustered).processed_bytes
+
+
+def test_cli_reads_cluster_positions_from_csv(tmp_path):
+    src = tmp_path / "c.csv"
+    src.write_text("table_name,column_name,data_type,clustering_ordinal_position\n"
+                   "t,a,INT64,2\nt,b,INT64,1\nt,c,INT64,\n")
+    out = tmp_path / "o.json"
+    assert main([str(src), "--rows", "t=3", "-o", str(out)]) == 0
+    assert json.loads(out.read_text())["t"]["cluster_columns"] == ["b", "a"]
