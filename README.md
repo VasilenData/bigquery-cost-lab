@@ -64,7 +64,7 @@ PYTHONPATH=src python -m bqcost "SELECT * FROM tx_part_clust LIMIT 10"
 ```
 Output for that query: three findings (SELECT *, LIMIT as cost control, no partition filter) and an estimate of 1348 MiB billed.
 
-To build a catalog for your own dataset instead of writing it by hand, export `INFORMATION_SCHEMA.COLUMNS` (`table_name, column_name, data_type, is_partitioning_column`) and `INFORMATION_SCHEMA.TABLE_STORAGE` (`table_name, total_rows`) from the console, then:
+To build a catalog for your own dataset instead of writing it by hand, export `INFORMATION_SCHEMA.COLUMNS` (`table_name, column_name, data_type, is_partitioning_column`, and optionally `clustering_ordinal_position`, which is stored as `cluster_columns` in order) and `INFORMATION_SCHEMA.TABLE_STORAGE` (`table_name, total_rows`) from the console, then:
 ```
 PYTHONPATH=src python -m bqcost.catalog columns.csv --storage storage.csv --avg-len my_table.my_string_col=64 -o catalog/mine.json
 PYTHONPATH=src python -m bqcost --catalog catalog/mine.json "SELECT ..."
@@ -80,7 +80,7 @@ It understands a top-level AND of `=`, `<`, `<=`, `>`, `>=` and `BETWEEN` agains
 
 Check against my lab: I did not save per-day row counts of the January copy, so I cannot test this on the real partitions. If the 31 days were exactly equal, the one-day query would predict 7.10 MiB; the real job processed 7.61 MiB, about 7% more, so days are not equal. The tests use synthetic partitions with unequal sizes instead. To build the map from an export instead of by hand, pass `--partitions parts.csv` (columns `table_name, partition_id, total_rows` from `INFORMATION_SCHEMA.PARTITIONS`) to `bqcost.catalog`. It refuses duplicate partitions, empty ids, non-integer or negative counts, and a partition list for a table with no partitioning column. Special ids such as `__NULL__` are stored as given and make the estimator keep every partition. I tested this on synthetic exports, not on a live `PARTITIONS` query.
 
-Lint rules (each tied to a measurement above): `BQ001` SELECT *, `BQ002` LIMIT with no filter or aggregate, `BQ003` no filter on a declared partition column, `BQ004` COUNT(DISTINCT) note (info only). SQL is parsed with [sqlglot](https://github.com/tobymao/sqlglot).
+Lint rules (each tied to a measurement above): `BQ001` SELECT *, `BQ002` LIMIT with no filter or aggregate, `BQ003` no filter on a declared partition column, `BQ004` COUNT(DISTINCT) note (info only), `BQ005` a table with `cluster_columns` in the catalog is queried without a WHERE filter on its leading cluster column (info only; it only says clustering cannot help, the estimate is unchanged and still an upper bound). The lab catalog marks `tx_clust` and `tx_part_clust` as clustered by `block_number`. SQL is parsed with [sqlglot](https://github.com/tobymao/sqlglot).
 
 ## Decisions and trade-offs
 - **Dry runs over real runs.** A dry run reports bytes without executing or billing, so every public-table number cost nothing and can be reproduced by anyone with a Google account. Only the sandbox experiments ran real jobs.
@@ -90,7 +90,7 @@ Lint rules (each tied to a measurement above): `BQ001` SELECT *, `BQ002` LIMIT w
 - **Binary units.** The console's GB and TB are powers of 1024 (the 220.01 figure only reconciles that way), so prices use per-TiB.
 
 ## Next steps
-Try the catalog builder (including `--partitions`) and the partition pruning model on a live `INFORMATION_SCHEMA` export, model cluster pruning, and run the same measurements on a table with nested columns of my own.
+Try the catalog builder (including `--partitions`) and the partition pruning model on a live `INFORMATION_SCHEMA` export, model cluster pruning itself (the catalog now records clustering columns and the linter uses them, but the byte estimate does not), and run the same measurements on a table with nested columns of my own.
 
 ## Limits, stated plainly
 - **Estimates are for column pruning, plus daily partition pruning when the catalog lists partitions.** Cluster pruning is not modeled, and a filtered query on a table without a partition listing gets an upper bound. It supports one SELECT scope with cataloged tables and explicit JOIN ON columns. Qualified stars read only their source table; unknown or ambiguous columns are refused. Qualified table names require matching full catalog keys, rather than borrowing another dataset's same-named table metadata.
